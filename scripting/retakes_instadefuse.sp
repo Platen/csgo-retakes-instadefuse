@@ -2,8 +2,6 @@
 #include <sdktools>
 #include <cstrike>
 
-#include "include/retakes.inc"
-
 #pragma semicolon 1
 #pragma newdecls required
 
@@ -21,7 +19,8 @@ ConVar hMaxrounds = null;
 Handle fw_OnInstantDefusePre = null;
 Handle fw_OnInstantDefusePost = null;
 
-bool g_RetakesLoaded = false;
+bool g_RetakesEnabled = false;
+Handle g_h_retakes_enabled = null;
 
 float g_c4PlantTime = 0.0;
 bool g_bAlreadyComplete = false;
@@ -29,70 +28,71 @@ bool g_bWouldMakeIt = false;
 
 public Plugin myinfo =
 {
-    name = "[Retakes] Instant Defuse",
-    author = "B3none",
-    description = "Allows a CT to instantly defuse the bomb when all Ts are dead and nothing can prevent the defusal.",
-    version = "1.4.0",
-    url = "https://github.com/b3none"
+	name = "[Retakes] Instant Defuse",
+	author = "B3none",
+	description = "Allows a CT to instantly defuse the bomb when all Ts are dead and nothing can prevent the defusal.",
+	version = "1.4.0",
+	url = "https://github.com/b3none"
 }
 
 public void OnPluginStart()
 {
-    LoadTranslations("instadefuse.phrases");
+	LoadTranslations("instadefuse.phrases");
 
-    g_h_sm_retakes_instadefuse_enabled = CreateConVar("sm_retakes_instadefuse_enabled", "0", "Should instant defuse be enabled?");
-    HookConVarChange(g_h_sm_retakes_instadefuse_enabled, InstadefuseEnabledChanged);
+	g_h_sm_retakes_instadefuse_enabled = CreateConVar("sm_retakes_instadefuse_enabled", "0", "Should instant defuse be enabled?");
+	HookConVarChange(g_h_sm_retakes_instadefuse_enabled, InstadefuseEnabledChanged);
 
-    HookEvent("bomb_begindefuse", Event_BombBeginDefuse, EventHookMode_Post);
-    HookEvent("bomb_planted", Event_BombPlanted, EventHookMode_Pre);
-    HookEvent("molotov_detonate", Event_MolotovDetonate);
-    HookEvent("hegrenade_detonate", Event_AttemptInstantDefuse, EventHookMode_Post);
+	HookEvent("bomb_begindefuse", Event_BombBeginDefuse, EventHookMode_Post);
+	HookEvent("bomb_planted", Event_BombPlanted, EventHookMode_Pre);
+	HookEvent("molotov_detonate", Event_MolotovDetonate);
+	HookEvent("hegrenade_detonate", Event_AttemptInstantDefuse, EventHookMode_Post);
 
-    HookEvent("player_death", Event_AttemptInstantDefuse, EventHookMode_PostNoCopy);
-    HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
-    HookEvent("round_end", Event_RoundEnd, EventHookMode_PostNoCopy);
+	HookEvent("player_death", Event_AttemptInstantDefuse, EventHookMode_PostNoCopy);
+	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
+	HookEvent("round_end", Event_RoundEnd, EventHookMode_PostNoCopy);
 
-    hInfernoDuration = CreateConVar("instant_defuse_inferno_duration", "7.0", "If Valve ever changed the duration of molotov, this cvar should change with it.");
-    hEndIfTooLate = CreateConVar("instant_defuse_end_if_too_late", "1.0", "End the round if too late.", _, true, 0.0, true, 1.0);
-    hDefuseIfTime = CreateConVar("instant_defuse_if_time", "1.0", "Instant defuse if there is time to do so.", _, true, 0.0, true, 1.0);
-    hMaxrounds = FindConVar("mp_maxrounds");
+	hInfernoDuration = CreateConVar("instant_defuse_inferno_duration", "7.0", "If Valve ever changed the duration of molotov, this cvar should change with it.");
+	hEndIfTooLate = CreateConVar("instant_defuse_end_if_too_late", "1.0", "End the round if too late.", _, true, 0.0, true, 1.0);
+	hDefuseIfTime = CreateConVar("instant_defuse_if_time", "1.0", "Instant defuse if there is time to do so.", _, true, 0.0, true, 1.0);
+	hMaxrounds = FindConVar("mp_maxrounds");
 
-    /** Create/Execute retakes cvars **/
-    AutoExecConfig(true, "retakes_instadefuse", "sourcemod/retakes");
+	/** Create/Execute retakes cvars **/
+	AutoExecConfig(true, "retakes_instadefuse", "sourcemod/retakes");
 
-    // Added the forwards to allow other plugins to call this one.
-    fw_OnInstantDefusePre = CreateGlobalForward("InstantDefuse_OnInstantDefusePre", ET_Event, Param_Cell, Param_Cell);
-    fw_OnInstantDefusePost = CreateGlobalForward("InstantDefuse_OnInstantDefusePost", ET_Ignore, Param_Cell, Param_Cell);
-
-    g_RetakesLoaded = LibraryExists("retakes");
+	// Added the forwards to allow other plugins to call this one.
+	fw_OnInstantDefusePre = CreateGlobalForward("InstantDefuse_OnInstantDefusePre", ET_Event, Param_Cell, Param_Cell);
+	fw_OnInstantDefusePost = CreateGlobalForward("InstantDefuse_OnInstantDefusePost", ET_Ignore, Param_Cell, Param_Cell);
 }
 
-public void OnLibraryAdded(const char[] name) {
-  g_RetakesLoaded = LibraryExists("retakes");
+public void OnAllPluginsLoaded() {
+	g_h_retakes_enabled = FindConVar("sm_retakes_enabled");
+	if (g_h_retakes_enabled != null)
+	{
+		HookConVarChange(g_h_retakes_enabled, RetakesEnabledChanged);
+	}
 }
 
-public void OnLibraryRemoved(const char[] name) {
-  g_RetakesLoaded = LibraryExists("retakes");
+public void OnConfigsExecuted()
+{
+	g_RetakesInstadefuseEnabled = GetConVarBool(g_h_sm_retakes_instadefuse_enabled);
+
+	if (g_h_retakes_enabled != null)
+	{
+		g_RetakesEnabled = GetConVarBool(g_h_retakes_enabled);
+	}
 }
 
 public int InstadefuseEnabledChanged(Handle cvar, const char[] oldValue, const char[] newValue) {
-    bool wasEnabled = g_RetakesInstadefuseEnabled;
-    bool nowEnabled = !StrEqual(newValue, "0");
+	g_RetakesInstadefuseEnabled = !StrEqual(newValue, "0");
+}
 
-    if (nowEnabled && (!g_RetakesLoaded || !Retakes_Enabled())) {
-        nowEnabled = false;
-    }
-
-    if (wasEnabled && !nowEnabled) {
-        g_RetakesInstadefuseEnabled = false;
-    } else if (!wasEnabled && nowEnabled) {
-        g_RetakesInstadefuseEnabled = true;
-    }
+public int RetakesEnabledChanged(Handle cvar, const char[] oldValue, const char[] newValue) {
+	g_RetakesEnabled = !StrEqual(newValue, "0");
 }
 
 public void OnMapStart()
 {
-    hTimer_MolotovThreatEnd = null;
+	hTimer_MolotovThreatEnd = null;
 }
 
 public Action Event_RoundStart(Handle event, const char[] name, bool dontBroadcast)
@@ -108,24 +108,24 @@ public Action Event_RoundStart(Handle event, const char[] name, bool dontBroadca
 
 public Action Event_RoundEnd(Handle event, const char[] name, bool dontBroadcast)
 {
-    if (!g_RetakesInstadefuseEnabled)
-        return;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return;
 
-    if ((CS_GetTeamScore(CS_TEAM_T) + CS_GetTeamScore(CS_TEAM_CT)) >= hMaxrounds.IntValue)
-    {
-    	ForceEnd();
-    }
+	if ((CS_GetTeamScore(CS_TEAM_T) + CS_GetTeamScore(CS_TEAM_CT)) >= hMaxrounds.IntValue)
+	{
+		ForceEnd();
+	}
 }
 
 public Action Event_BombPlanted(Handle event, const char[] name, bool dontBroadcast)
 {
-    g_c4PlantTime = GetGameTime();
+	g_c4PlantTime = GetGameTime();
 }
 
 public Action Event_BombBeginDefuse(Handle event, const char[] name, bool dontBroadcast)
 {
-  if (!g_RetakesInstadefuseEnabled)
-    return Plugin_Handled;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return Plugin_Handled;
 
 	if (g_bAlreadyComplete)
 	{
@@ -144,20 +144,20 @@ public void Event_BombBeginDefusePlusFrame(int userId)
 	int client = GetClientOfUserId(userId);
 
 	if (IsValidClient(client))
-    {
-    	AttemptInstantDefuse(client);
-    }
+	{
+		AttemptInstantDefuse(client);
+	}
 }
 
 void AttemptInstantDefuse(int client, int exemptNade = 0)
 {
-  if (!g_RetakesInstadefuseEnabled)
-    return;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return;
 
-  if (g_bAlreadyComplete || !GetEntProp(client, Prop_Send, "m_bIsDefusing") || HasAlivePlayer(CS_TEAM_T))
-  {
-    return;
-  }
+	if (g_bAlreadyComplete || !GetEntProp(client, Prop_Send, "m_bIsDefusing") || HasAlivePlayer(CS_TEAM_T))
+	{
+		return;
+	}
 
 	int StartEnt = MaxClients + 1;
 
@@ -165,7 +165,7 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 
 	if (c4 == -1)
 	{
-	    return;
+		return;
 	}
 
 	bool hasDefuseKit = HasDefuseKit(client);
@@ -184,12 +184,12 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 		}
 
 		for (int i = 0; i <= MaxClients; i++)
-    	{
-    		if (IsValidClient(i))
-    		{
-	    		PrintToChat(i, "%T", "InstaDefuseUnsuccessful", i, MESSAGE_PREFIX, c4TimeLeft);
-    		}
-    	}
+		{
+			if (IsValidClient(i))
+			{
+				PrintToChat(i, "%T", "InstaDefuseUnsuccessful", i, MESSAGE_PREFIX, c4TimeLeft);
+			}
+		}
 
 		g_bAlreadyComplete = true;
 
@@ -206,30 +206,30 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 	int ent;
 	if ((ent = FindEntityByClassname(StartEnt, "hegrenade_projectile")) != -1 || (ent = FindEntityByClassname(StartEnt, "molotov_projectile")) != -1)
 	{
-	    if (ent != exemptNade)
-	    {
-	    	for (int i = 0; i <= MaxClients; i++)
-	    	{
-	    		if (IsValidClient(i))
-	    		{
-		    		PrintToChat(i, "%T", "LiveNadeSomewhere", i, MESSAGE_PREFIX);
-	    		}
-	    	}
+		if (ent != exemptNade)
+		{
+			for (int i = 0; i <= MaxClients; i++)
+			{
+				if (IsValidClient(i))
+				{
+					PrintToChat(i, "%T", "LiveNadeSomewhere", i, MESSAGE_PREFIX);
+				}
+			}
 
-	        return;
-	    }
+			return;
+		}
 	}
 	else if (hTimer_MolotovThreatEnd != null)
 	{
-	    for (int i = 0; i <= MaxClients; i++)
-    	{
-    		if (IsValidClient(i))
-    		{
-	    		PrintToChat(i, "%T", "MolotovTooClose", i, MESSAGE_PREFIX);
-    		}
-    	}
+		for (int i = 0; i <= MaxClients; i++)
+		{
+			if (IsValidClient(i))
+			{
+				PrintToChat(i, "%T", "MolotovTooClose", i, MESSAGE_PREFIX);
+			}
+		}
 
-	    return;
+		return;
 	}
 
 	if (!OnInstandDefusePre(client, c4))
@@ -254,67 +254,67 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 
 public Action Event_AttemptInstantDefuse(Handle event, const char[] name, bool dontBroadcast)
 {
-    if (!g_RetakesInstadefuseEnabled)
-        return;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return;
 
-    int defuser = GetDefusingPlayer();
+	int defuser = GetDefusingPlayer();
 
-    int ent = 0;
+	int ent = 0;
 
-    if (StrContains(name, "detonate") != -1 && defuser != 0)
-    {
-        ent = GetEventInt(event, "entityid");
+	if (StrContains(name, "detonate") != -1 && defuser != 0)
+	{
+		ent = GetEventInt(event, "entityid");
 
-        AttemptInstantDefuse(defuser, ent);
-    }
+		AttemptInstantDefuse(defuser, ent);
+	}
 }
 
 public Action Event_MolotovDetonate(Handle event, const char[] name, bool dontBroadcast)
 {
-    if (!g_RetakesInstadefuseEnabled)
-        return;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return;
 
-    float Origin[3];
-    Origin[0] = GetEventFloat(event, "x");
-    Origin[1] = GetEventFloat(event, "y");
-    Origin[2] = GetEventFloat(event, "z");
+	float Origin[3];
+	Origin[0] = GetEventFloat(event, "x");
+	Origin[1] = GetEventFloat(event, "y");
+	Origin[2] = GetEventFloat(event, "z");
 
-    int c4 = FindEntityByClassname(MaxClients + 1, "planted_c4");
+	int c4 = FindEntityByClassname(MaxClients + 1, "planted_c4");
 
-    if (c4 == -1)
-    {
-        return;
-    }
+	if (c4 == -1)
+	{
+		return;
+	}
 
-    float C4Origin[3];
-    GetEntPropVector(c4, Prop_Data, "m_vecOrigin", C4Origin);
+	float C4Origin[3];
+	GetEntPropVector(c4, Prop_Data, "m_vecOrigin", C4Origin);
 
-    if (GetVectorDistance(Origin, C4Origin, false) > 150)
-    {
-        return;
-    }
+	if (GetVectorDistance(Origin, C4Origin, false) > 150)
+	{
+		return;
+	}
 
-    if (hTimer_MolotovThreatEnd != null)
-    {
-        delete hTimer_MolotovThreatEnd;
-    }
+	if (hTimer_MolotovThreatEnd != null)
+	{
+		delete hTimer_MolotovThreatEnd;
+	}
 
-    hTimer_MolotovThreatEnd = CreateTimer(GetConVarFloat(hInfernoDuration), Timer_MolotovThreatEnd, _, TIMER_FLAG_NO_MAPCHANGE);
+	hTimer_MolotovThreatEnd = CreateTimer(GetConVarFloat(hInfernoDuration), Timer_MolotovThreatEnd, _, TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public Action Timer_MolotovThreatEnd(Handle timer)
 {
-    if (!g_RetakesInstadefuseEnabled)
-        return;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return;
 
-    hTimer_MolotovThreatEnd = null;
+	hTimer_MolotovThreatEnd = null;
 
-    int defuser = GetDefusingPlayer();
+	int defuser = GetDefusingPlayer();
 
-    if (defuser != 0)
-    {
-        AttemptInstantDefuse(defuser);
-    }
+	if (defuser != 0)
+	{
+		AttemptInstantDefuse(defuser);
+	}
 }
 
 void OnInstantDefusePost(int client, int c4)
@@ -329,43 +329,43 @@ void OnInstantDefusePost(int client, int c4)
 
 void EndRound(int team, bool waitFrame = true)
 {
-    if (!g_RetakesInstadefuseEnabled)
-        return;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return;
 
-    if (waitFrame)
-    {
-        RequestFrame(Frame_EndRound, team);
+	if (waitFrame)
+	{
+		RequestFrame(Frame_EndRound, team);
 
-        return;
-    }
+		return;
+	}
 
-    Frame_EndRound(team);
+	Frame_EndRound(team);
 }
 
 void Frame_EndRound(int team)
 {
-    int RoundEndEntity = CreateEntityByName("game_round_end");
+	int RoundEndEntity = CreateEntityByName("game_round_end");
 
-    DispatchSpawn(RoundEndEntity);
+	DispatchSpawn(RoundEndEntity);
 
-    SetVariantFloat(1.0);
+	SetVariantFloat(1.0);
 
-    if (team == CS_TEAM_CT)
-    {
-        AcceptEntityInput(RoundEndEntity, "EndRound_CounterTerroristsWin");
-    }
-    else if (team == CS_TEAM_T)
-    {
-        AcceptEntityInput(RoundEndEntity, "EndRound_TerroristsWin");
-    }
+	if (team == CS_TEAM_CT)
+	{
+		AcceptEntityInput(RoundEndEntity, "EndRound_CounterTerroristsWin");
+	}
+	else if (team == CS_TEAM_T)
+	{
+		AcceptEntityInput(RoundEndEntity, "EndRound_TerroristsWin");
+	}
 
-    AcceptEntityInput(RoundEndEntity, "Kill");
+	AcceptEntityInput(RoundEndEntity, "Kill");
 }
 
 void ForceEnd()
 {
-  if (!g_RetakesInstadefuseEnabled)
-    return;
+	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+		return;
 
 	int gameEndEntity = CreateEntityByName("game_end");
 
@@ -374,15 +374,15 @@ void ForceEnd()
 
 stock int GetDefusingPlayer()
 {
-    for (int i = 1; i <= MaxClients; i++)
-    {
-        if (IsValidClient(i) && IsPlayerAlive(i) && GetEntProp(i, Prop_Send, "m_bIsDefusing"))
-        {
-            return i;
-        }
-    }
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (IsValidClient(i) && IsPlayerAlive(i) && GetEntProp(i, Prop_Send, "m_bIsDefusing"))
+		{
+			return i;
+		}
+	}
 
-    return 0;
+	return 0;
 }
 
 stock bool OnInstandDefusePre(int client, int c4)
@@ -405,18 +405,18 @@ bool HasDefuseKit(int client)
 
 stock bool HasAlivePlayer(int team)
 {
-    for (int i = 1; i <= MaxClients; i++)
-    {
-        if (IsValidClient(i) && IsPlayerAlive(i) && GetClientTeam(i) == team)
-        {
-            return true;
-        }
-    }
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (IsValidClient(i) && IsPlayerAlive(i) && GetClientTeam(i) == team)
+		{
+			return true;
+		}
+	}
 
-    return false;
+	return false;
 }
 
 stock bool IsValidClient(int client)
 {
-    return client > 0 && client <= MaxClients && IsClientInGame(client) && IsClientConnected(client) && IsClientAuthorized(client) && !IsFakeClient(client);
+	return client > 0 && client <= MaxClients && IsClientInGame(client) && IsClientConnected(client) && IsClientAuthorized(client) && !IsFakeClient(client);
 }
