@@ -57,6 +57,9 @@ public void OnPluginStart()
     hDefuseIfTime = CreateConVar("instant_defuse_if_time", "1.0", "Instant defuse if there is time to do so.", _, true, 0.0, true, 1.0);
     hMaxrounds = FindConVar("mp_maxrounds");
 
+    /** Create/Execute retakes cvars **/
+    AutoExecConfig(true, "retakes_instadefuse", "sourcemod/retakes");
+
     // Added the forwards to allow other plugins to call this one.
     fw_OnInstantDefusePre = CreateGlobalForward("InstantDefuse_OnInstantDefusePre", ET_Event, Param_Cell, Param_Cell);
     fw_OnInstantDefusePost = CreateGlobalForward("InstantDefuse_OnInstantDefusePost", ET_Ignore, Param_Cell, Param_Cell);
