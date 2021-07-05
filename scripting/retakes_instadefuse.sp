@@ -2,11 +2,16 @@
 #include <sdktools>
 #include <cstrike>
 
+#include "include/retakes.inc"
+
 #pragma semicolon 1
 #pragma newdecls required
 
 #define MESSAGE_PREFIX "[\x04InstantDefuse\x01]"
- 
+
+bool g_RetakesInstadefuseEnabled = false;
+ConVar g_h_sm_retakes_instadefuse_enabled = null;
+
 Handle hEndIfTooLate = null;
 Handle hDefuseIfTime = null;
 Handle hInfernoDuration = null;
@@ -16,10 +21,12 @@ ConVar hMaxrounds = null;
 Handle fw_OnInstantDefusePre = null;
 Handle fw_OnInstantDefusePost = null;
 
+bool g_RetakesLoaded = false;
+
 float g_c4PlantTime = 0.0;
 bool g_bAlreadyComplete = false;
 bool g_bWouldMakeIt = false;
- 
+
 public Plugin myinfo =
 {
     name = "[Retakes] Instant Defuse",
@@ -33,23 +40,51 @@ public void OnPluginStart()
 {
     LoadTranslations("instadefuse.phrases");
 
+    g_h_sm_retakes_instadefuse_enabled = CreateConVar("sm_retakes_instadefuse_enabled", "0", "Should instant defuse be enabled?");
+    HookConVarChange(g_h_sm_retakes_instadefuse_enabled, InstadefuseEnabledChanged);
+
     HookEvent("bomb_begindefuse", Event_BombBeginDefuse, EventHookMode_Post);
     HookEvent("bomb_planted", Event_BombPlanted, EventHookMode_Pre);
     HookEvent("molotov_detonate", Event_MolotovDetonate);
     HookEvent("hegrenade_detonate", Event_AttemptInstantDefuse, EventHookMode_Post);
-    
+
     HookEvent("player_death", Event_AttemptInstantDefuse, EventHookMode_PostNoCopy);
     HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
     HookEvent("round_end", Event_RoundEnd, EventHookMode_PostNoCopy);
-    
+
     hInfernoDuration = CreateConVar("instant_defuse_inferno_duration", "7.0", "If Valve ever changed the duration of molotov, this cvar should change with it.");
     hEndIfTooLate = CreateConVar("instant_defuse_end_if_too_late", "1.0", "End the round if too late.", _, true, 0.0, true, 1.0);
     hDefuseIfTime = CreateConVar("instant_defuse_if_time", "1.0", "Instant defuse if there is time to do so.", _, true, 0.0, true, 1.0);
     hMaxrounds = FindConVar("mp_maxrounds");
-    
+
     // Added the forwards to allow other plugins to call this one.
     fw_OnInstantDefusePre = CreateGlobalForward("InstantDefuse_OnInstantDefusePre", ET_Event, Param_Cell, Param_Cell);
     fw_OnInstantDefusePost = CreateGlobalForward("InstantDefuse_OnInstantDefusePost", ET_Ignore, Param_Cell, Param_Cell);
+
+    g_RetakesLoaded = LibraryExists("retakes");
+}
+
+public void OnLibraryAdded(const char[] name) {
+  g_RetakesLoaded = LibraryExists("retakes");
+}
+
+public void OnLibraryRemoved(const char[] name) {
+  g_RetakesLoaded = LibraryExists("retakes");
+}
+
+public int InstadefuseEnabledChanged(Handle cvar, const char[] oldValue, const char[] newValue) {
+    bool wasEnabled = g_RetakesInstadefuseEnabled;
+    bool nowEnabled = !StrEqual(newValue, "0");
+
+    if (nowEnabled && (!g_RetakesLoaded || !Retakes_Enabled())) {
+        nowEnabled = false;
+    }
+
+    if (wasEnabled && !nowEnabled) {
+        g_RetakesInstadefuseEnabled = false;
+    } else if (!wasEnabled && nowEnabled) {
+        g_RetakesInstadefuseEnabled = true;
+    }
 }
 
 public void OnMapStart()
@@ -61,7 +96,7 @@ public Action Event_RoundStart(Handle event, const char[] name, bool dontBroadca
 {
 	g_bAlreadyComplete = false;
 	g_bWouldMakeIt = false;
-	
+
 	if (hTimer_MolotovThreatEnd != null)
 	{
 		delete hTimer_MolotovThreatEnd;
@@ -70,7 +105,10 @@ public Action Event_RoundStart(Handle event, const char[] name, bool dontBroadca
 
 public Action Event_RoundEnd(Handle event, const char[] name, bool dontBroadcast)
 {
-	if ((CS_GetTeamScore(CS_TEAM_T) + CS_GetTeamScore(CS_TEAM_CT)) >= hMaxrounds.IntValue)
+    if (!g_RetakesInstadefuseEnabled)
+        return;
+
+    if ((CS_GetTeamScore(CS_TEAM_T) + CS_GetTeamScore(CS_TEAM_CT)) >= hMaxrounds.IntValue)
     {
     	ForceEnd();
     }
@@ -83,22 +121,25 @@ public Action Event_BombPlanted(Handle event, const char[] name, bool dontBroadc
 
 public Action Event_BombBeginDefuse(Handle event, const char[] name, bool dontBroadcast)
 {
+  if (!g_RetakesInstadefuseEnabled)
+    return Plugin_Handled;
+
 	if (g_bAlreadyComplete)
 	{
 		return Plugin_Handled;
 	}
-	
+
 	RequestFrame(Event_BombBeginDefusePlusFrame, GetEventInt(event, "userid"));
-	
+
 	return Plugin_Continue;
 }
 
 public void Event_BombBeginDefusePlusFrame(int userId)
 {
 	g_bWouldMakeIt = false;
-	
+
 	int client = GetClientOfUserId(userId);
-	
+
 	if (IsValidClient(client))
     {
     	AttemptInstantDefuse(client);
@@ -107,35 +148,38 @@ public void Event_BombBeginDefusePlusFrame(int userId)
 
 void AttemptInstantDefuse(int client, int exemptNade = 0)
 {
-	if (g_bAlreadyComplete || !GetEntProp(client, Prop_Send, "m_bIsDefusing") || HasAlivePlayer(CS_TEAM_T))
-	{
-		return;
-	}
-	
+  if (!g_RetakesInstadefuseEnabled)
+    return;
+
+  if (g_bAlreadyComplete || !GetEntProp(client, Prop_Send, "m_bIsDefusing") || HasAlivePlayer(CS_TEAM_T))
+  {
+    return;
+  }
+
 	int StartEnt = MaxClients + 1;
-	
+
 	int c4 = FindEntityByClassname(StartEnt, "planted_c4");
-	
+
 	if (c4 == -1)
 	{
 	    return;
 	}
-	
+
 	bool hasDefuseKit = HasDefuseKit(client);
 	float c4TimeLeft = GetConVarFloat(FindConVar("mp_c4timer")) - (GetGameTime() - g_c4PlantTime);
-	
+
 	if (!g_bWouldMakeIt)
 	{
 		g_bWouldMakeIt = (c4TimeLeft >= 10.0 && !hasDefuseKit) || (c4TimeLeft >= 5.0 && hasDefuseKit);
 	}
-	
+
 	if (GetConVarInt(hEndIfTooLate) == 1 && !g_bWouldMakeIt)
 	{
 		if (!OnInstandDefusePre(client, c4))
 		{
 			return;
 		}
-		
+
 		for (int i = 0; i <= MaxClients; i++)
     	{
     		if (IsValidClient(i))
@@ -143,19 +187,19 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 	    		PrintToChat(i, "%T", "InstaDefuseUnsuccessful", i, MESSAGE_PREFIX, c4TimeLeft);
     		}
     	}
-		
+
 		g_bAlreadyComplete = true;
-		
+
 		// Force Terrorist win because they do not have enough time to defuse the bomb.
 		EndRound(CS_TEAM_T);
-		
+
 		return;
 	}
 	else if (GetConVarInt(hDefuseIfTime) != 1 || GetEntityFlags(client) && !FL_ONGROUND)
 	{
 		return;
 	}
-	
+
 	int ent;
 	if ((ent = FindEntityByClassname(StartEnt, "hegrenade_projectile")) != -1 || (ent = FindEntityByClassname(StartEnt, "molotov_projectile")) != -1)
 	{
@@ -168,10 +212,10 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 		    		PrintToChat(i, "%T", "LiveNadeSomewhere", i, MESSAGE_PREFIX);
 	    		}
 	    	}
-	    	
+
 	        return;
 	    }
-	}  
+	}
 	else if (hTimer_MolotovThreatEnd != null)
 	{
 	    for (int i = 0; i <= MaxClients; i++)
@@ -181,15 +225,15 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 	    		PrintToChat(i, "%T", "MolotovTooClose", i, MESSAGE_PREFIX);
     		}
     	}
-	    
+
 	    return;
 	}
-	
+
 	if (!OnInstandDefusePre(client, c4))
 	{
 		return;
 	}
-	
+
 	for (int i = 0; i <= MaxClients; i++)
 	{
 		if (IsValidClient(i))
@@ -197,64 +241,73 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 			PrintToChat(i, "%T", "InstaDefuseSuccessful", i, MESSAGE_PREFIX, c4TimeLeft);
 		}
 	}
-	
+
 	g_bAlreadyComplete = true;
-	
+
 	EndRound(CS_TEAM_CT);
-	
+
 	OnInstantDefusePost(client, c4);
 }
- 
+
 public Action Event_AttemptInstantDefuse(Handle event, const char[] name, bool dontBroadcast)
 {
+    if (!g_RetakesInstadefuseEnabled)
+        return;
+
     int defuser = GetDefusingPlayer();
-   
+
     int ent = 0;
-   
+
     if (StrContains(name, "detonate") != -1 && defuser != 0)
     {
         ent = GetEventInt(event, "entityid");
-        
+
         AttemptInstantDefuse(defuser, ent);
     }
 }
 
 public Action Event_MolotovDetonate(Handle event, const char[] name, bool dontBroadcast)
 {
+    if (!g_RetakesInstadefuseEnabled)
+        return;
+
     float Origin[3];
     Origin[0] = GetEventFloat(event, "x");
     Origin[1] = GetEventFloat(event, "y");
     Origin[2] = GetEventFloat(event, "z");
-   
+
     int c4 = FindEntityByClassname(MaxClients + 1, "planted_c4");
-   
+
     if (c4 == -1)
     {
         return;
     }
-   
+
     float C4Origin[3];
     GetEntPropVector(c4, Prop_Data, "m_vecOrigin", C4Origin);
-   
+
     if (GetVectorDistance(Origin, C4Origin, false) > 150)
     {
         return;
     }
- 
+
     if (hTimer_MolotovThreatEnd != null)
     {
         delete hTimer_MolotovThreatEnd;
     }
-   
+
     hTimer_MolotovThreatEnd = CreateTimer(GetConVarFloat(hInfernoDuration), Timer_MolotovThreatEnd, _, TIMER_FLAG_NO_MAPCHANGE);
 }
- 
+
 public Action Timer_MolotovThreatEnd(Handle timer)
 {
+    if (!g_RetakesInstadefuseEnabled)
+        return;
+
     hTimer_MolotovThreatEnd = null;
-   
+
     int defuser = GetDefusingPlayer();
-   
+
     if (defuser != 0)
     {
         AttemptInstantDefuse(defuser);
@@ -264,33 +317,36 @@ public Action Timer_MolotovThreatEnd(Handle timer)
 void OnInstantDefusePost(int client, int c4)
 {
 	Call_StartForward(fw_OnInstantDefusePost);
-	
+
 	Call_PushCell(client);
 	Call_PushCell(c4);
-	
+
 	Call_Finish();
 }
 
 void EndRound(int team, bool waitFrame = true)
 {
+    if (!g_RetakesInstadefuseEnabled)
+        return;
+
     if (waitFrame)
     {
         RequestFrame(Frame_EndRound, team);
-        
+
         return;
     }
-    
+
     Frame_EndRound(team);
 }
 
 void Frame_EndRound(int team)
 {
     int RoundEndEntity = CreateEntityByName("game_round_end");
-    
+
     DispatchSpawn(RoundEndEntity);
-    
+
     SetVariantFloat(1.0);
-    
+
     if (team == CS_TEAM_CT)
     {
         AcceptEntityInput(RoundEndEntity, "EndRound_CounterTerroristsWin");
@@ -299,17 +355,20 @@ void Frame_EndRound(int team)
     {
         AcceptEntityInput(RoundEndEntity, "EndRound_TerroristsWin");
     }
-    
+
     AcceptEntityInput(RoundEndEntity, "Kill");
 }
 
 void ForceEnd()
 {
+  if (!g_RetakesInstadefuseEnabled)
+    return;
+
 	int gameEndEntity = CreateEntityByName("game_end");
-	
+
 	AcceptEntityInput(gameEndEntity, "EndGame");
 }
- 
+
 stock int GetDefusingPlayer()
 {
     for (int i = 1; i <= MaxClients; i++)
@@ -319,19 +378,19 @@ stock int GetDefusingPlayer()
             return i;
         }
     }
-   
+
     return 0;
 }
 
 stock bool OnInstandDefusePre(int client, int c4)
 {
 	Action response;
-	
+
 	Call_StartForward(fw_OnInstantDefusePre);
 	Call_PushCell(client);
 	Call_PushCell(c4);
 	Call_Finish(response);
-	
+
 	return !(response != Plugin_Continue && response != Plugin_Changed);
 }
 
@@ -350,7 +409,7 @@ stock bool HasAlivePlayer(int team)
             return true;
         }
     }
-   
+
     return false;
 }
 
