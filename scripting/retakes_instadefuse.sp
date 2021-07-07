@@ -14,7 +14,6 @@ Handle hEndIfTooLate = null;
 Handle hDefuseIfTime = null;
 Handle hInfernoDuration = null;
 Handle hTimer_MolotovThreatEnd = null;
-ConVar hMaxrounds = null;
 
 Handle fw_OnInstantDefusePre = null;
 Handle fw_OnInstantDefusePost = null;
@@ -49,12 +48,10 @@ public void OnPluginStart()
 
 	HookEvent("player_death", Event_AttemptInstantDefuse, EventHookMode_PostNoCopy);
 	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
-	HookEvent("round_end", Event_RoundEnd, EventHookMode_PostNoCopy);
 
 	hInfernoDuration = CreateConVar("instant_defuse_inferno_duration", "7.0", "If Valve ever changed the duration of molotov, this cvar should change with it.");
 	hEndIfTooLate = CreateConVar("instant_defuse_end_if_too_late", "1.0", "End the round if too late.", _, true, 0.0, true, 1.0);
 	hDefuseIfTime = CreateConVar("instant_defuse_if_time", "1.0", "Instant defuse if there is time to do so.", _, true, 0.0, true, 1.0);
-	hMaxrounds = FindConVar("mp_maxrounds");
 
 	/** Create/Execute retakes cvars **/
 	AutoExecConfig(true, "retakes_instadefuse", "sourcemod/retakes");
@@ -103,17 +100,6 @@ public Action Event_RoundStart(Handle event, const char[] name, bool dontBroadca
 	if (hTimer_MolotovThreatEnd != null)
 	{
 		delete hTimer_MolotovThreatEnd;
-	}
-}
-
-public Action Event_RoundEnd(Handle event, const char[] name, bool dontBroadcast)
-{
-	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
-		return;
-
-	if ((CS_GetTeamScore(CS_TEAM_T) + CS_GetTeamScore(CS_TEAM_CT)) >= hMaxrounds.IntValue)
-	{
-		ForceEnd();
 	}
 }
 
@@ -360,16 +346,6 @@ void Frame_EndRound(int team)
 	}
 
 	AcceptEntityInput(RoundEndEntity, "Kill");
-}
-
-void ForceEnd()
-{
-	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
-		return;
-
-	int gameEndEntity = CreateEntityByName("game_end");
-
-	AcceptEntityInput(gameEndEntity, "EndGame");
 }
 
 stock int GetDefusingPlayer()
