@@ -168,7 +168,7 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 
 	if (GetConVarInt(hEndIfTooLate) == 1 && !g_bWouldMakeIt)
 	{
-		if (!OnInstandDefusePre(client, c4))
+		if (!OnInstantDefusePre(client, c4))
 		{
 			return;
 		}
@@ -222,7 +222,7 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 		return;
 	}
 
-	if (!OnInstandDefusePre(client, c4))
+	if (!OnInstantDefusePre(client, c4))
 	{
 		return;
 	}
@@ -373,7 +373,7 @@ stock int GetDefusingPlayer()
 	return 0;
 }
 
-stock bool OnInstandDefusePre(int client, int c4)
+stock bool OnInstantDefusePre(int client, int c4)
 {
 	Action response;
 
