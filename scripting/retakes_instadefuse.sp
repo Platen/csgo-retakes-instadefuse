@@ -111,7 +111,9 @@ public Action Event_BombPlanted(Handle event, const char[] name, bool dontBroadc
 public Action Event_BombBeginDefuse(Handle event, const char[] name, bool dontBroadcast)
 {
 	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+	{
 		return Plugin_Handled;
+	}
 
 	if (g_bAlreadyComplete)
 	{
@@ -138,7 +140,9 @@ public void Event_BombBeginDefusePlusFrame(int userId)
 void AttemptInstantDefuse(int client, int exemptNade = 0)
 {
 	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+	{
 		return;
+	}
 
 	if (g_bAlreadyComplete || !GetEntProp(client, Prop_Send, "m_bIsDefusing") || HasAlivePlayer(CS_TEAM_T))
 	{
@@ -241,7 +245,9 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 public Action Event_AttemptInstantDefuse(Handle event, const char[] name, bool dontBroadcast)
 {
 	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+	{
 		return;
+	}
 
 	int defuser = GetDefusingPlayer();
 
@@ -258,7 +264,9 @@ public Action Event_AttemptInstantDefuse(Handle event, const char[] name, bool d
 public Action Event_MolotovDetonate(Handle event, const char[] name, bool dontBroadcast)
 {
 	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+	{
 		return;
+	}
 
 	float Origin[3];
 	Origin[0] = GetEventFloat(event, "x");
@@ -291,7 +299,9 @@ public Action Event_MolotovDetonate(Handle event, const char[] name, bool dontBr
 public Action Timer_MolotovThreatEnd(Handle timer)
 {
 	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+	{
 		return;
+	}
 
 	hTimer_MolotovThreatEnd = null;
 
@@ -316,7 +326,9 @@ void OnInstantDefusePost(int client, int c4)
 void EndRound(int team, bool waitFrame = true)
 {
 	if (!g_RetakesInstadefuseEnabled  ||  !g_RetakesEnabled)
+	{
 		return;
+	}
 
 	if (waitFrame)
 	{
