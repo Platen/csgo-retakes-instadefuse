@@ -10,9 +10,12 @@
 bool g_RetakesInstadefuseEnabled = false;
 ConVar g_h_sm_retakes_instadefuse_enabled = null;
 
-Handle hEndIfTooLate = null;
-Handle hDefuseIfTime = null;
-Handle hInfernoDuration = null;
+ConVar hEndIfTooLate = null;
+ConVar hDefuseIfTime = null;
+ConVar hTimeForNoInstadefuseIfCloseSuc = null;
+ConVar hTimeForNoInstadefuseIfCloseUnsuc = null;
+ConVar hInfernoDuration = null;
+ConVar hInfernoDistance = null;
 Handle hTimer_MolotovThreatEnd = null;
 
 Handle fw_OnInstantDefusePre = null;
@@ -38,7 +41,7 @@ public void OnPluginStart()
 {
 	LoadTranslations("instadefuse.phrases");
 
-	g_h_sm_retakes_instadefuse_enabled = CreateConVar("sm_retakes_instadefuse_enabled", "0", "Should instant defuse be enabled?");
+	g_h_sm_retakes_instadefuse_enabled = CreateConVar("sm_instadefuse_enabled", "0", "Should instant defuse be enabled?");
 	HookConVarChange(g_h_sm_retakes_instadefuse_enabled, InstadefuseEnabledChanged);
 
 	HookEvent("bomb_begindefuse", Event_BombBeginDefuse, EventHookMode_Post);
@@ -49,9 +52,12 @@ public void OnPluginStart()
 	HookEvent("player_death", Event_AttemptInstantDefuse, EventHookMode_PostNoCopy);
 	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
 
-	hInfernoDuration = CreateConVar("instant_defuse_inferno_duration", "7.0", "If Valve ever changed the duration of molotov, this cvar should change with it.");
-	hEndIfTooLate = CreateConVar("instant_defuse_end_if_too_late", "1.0", "End the round if too late.", _, true, 0.0, true, 1.0);
-	hDefuseIfTime = CreateConVar("instant_defuse_if_time", "1.0", "Instant defuse if there is time to do so.", _, true, 0.0, true, 1.0);
+	hInfernoDuration = CreateConVar("sm_instadefuse_inferno_duration", "7.0", "If Valve ever changed the duration of molotov, this cvar should change with it.");
+	hInfernoDistance = CreateConVar("sm_instadefuse_inferno_distance", "225.0", "If Valve ever changed the maximum distance spread of molotov, this cvar should change with it.");
+	hEndIfTooLate = CreateConVar("sm_instadefuse_end_if_too_late", "1", "End the round if too late.");
+	hDefuseIfTime = CreateConVar("sm_instadefuse_if_time", "1", "Instant defuse if there is time to do so.");
+	hTimeForNoInstadefuseIfCloseSuc = CreateConVar("sm_instadefuse_if_too_close_suc", "0.0", "No instant defuse if this amount of time in seconds is left for a sucessful defuse.", _, true, 0.0);
+	hTimeForNoInstadefuseIfCloseUnsuc = CreateConVar("sm_instadefuse_if_too_close_unsuc", "0.0", "No instant defuse if this amount of time in seconds is missing for a sucessful defuse.", _, true, 0.0);
 
 	/** Create/Execute retakes cvars **/
 	AutoExecConfig(true, "retakes_instadefuse", "sourcemod/retakes");
@@ -159,14 +165,34 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 	}
 
 	bool hasDefuseKit = HasDefuseKit(client);
+	bool existsDefuseKit = hasDefuseKit || ExistsDefuseKit();
+	bool possiblyMakeIt = g_bWouldMakeIt;
+	bool isClose = false;
 	float c4TimeLeft = GetConVarFloat(FindConVar("mp_c4timer")) - (GetGameTime() - g_c4PlantTime);
 
 	if (!g_bWouldMakeIt)
 	{
-		g_bWouldMakeIt = (c4TimeLeft >= 10.0 && !hasDefuseKit) || (c4TimeLeft >= 5.0 && hasDefuseKit);
+		float offsetSuc = GetConVarFloat(hTimeForNoInstadefuseIfCloseSuc);
+		float offsetUnsuc = GetConVarFloat(hTimeForNoInstadefuseIfCloseUnsuc);
+		float timeNeeded = (hasDefuseKit? 5.0 : 10.0);
+		float minTimeNeeded = (existsDefuseKit? 5.0 : 10.0);
+		g_bWouldMakeIt = (c4TimeLeft >= timeNeeded);
+		possiblyMakeIt = (c4TimeLeft >= minTimeNeeded);
+		isClose = (c4TimeLeft >= timeNeeded - offsetUnsuc) && (c4TimeLeft <= timeNeeded + offsetSuc);
 	}
 
-	if (GetConVarInt(hEndIfTooLate) == 1 && !g_bWouldMakeIt)
+	if (isClose || (!g_bWouldMakeIt && possiblyMakeIt)) {
+		for (int i = 0; i <= MaxClients; i++)
+		{
+			if (IsValidClient(i))
+			{
+				PrintToChat(i, "%T", "InstaDefuseClose", i, MESSAGE_PREFIX);
+			}
+		}
+
+		return;
+	}
+	else if (GetConVarBool(hEndIfTooLate) && !possiblyMakeIt)
 	{
 		if (!OnInstantDefusePre(client, c4))
 		{
@@ -188,7 +214,7 @@ void AttemptInstantDefuse(int client, int exemptNade = 0)
 
 		return;
 	}
-	else if (GetConVarInt(hDefuseIfTime) != 1 || GetEntityFlags(client) && !FL_ONGROUND)
+	else if (!GetConVarBool(hDefuseIfTime) || GetEntityFlags(client) && !FL_ONGROUND)
 	{
 		return;
 	}
@@ -283,7 +309,7 @@ public Action Event_MolotovDetonate(Handle event, const char[] name, bool dontBr
 	float C4Origin[3];
 	GetEntPropVector(c4, Prop_Data, "m_vecOrigin", C4Origin);
 
-	if (GetVectorDistance(Origin, C4Origin, false) > 150)
+	if (GetVectorDistance(Origin, C4Origin, false) > GetConVarFloat(hInfernoDistance))
 	{
 		return;
 	}
@@ -389,6 +415,28 @@ bool HasDefuseKit(int client)
 {
 	bool hasDefuseKit = GetEntProp(client, Prop_Send, "m_bHasDefuser") == 1;
 	return hasDefuseKit;
+}
+
+bool ExistsDefuseKit()
+{
+	for(int i = 1; i <= MaxClients; i++)
+	{
+		if(IsValidClient(i) && IsPlayerAlive(i) && HasDefuseKit(i))
+		{
+			return true;
+		}
+	}
+
+	int ent = -1;
+	while((ent = FindEntityByClassname(ent, "item_defuser")) != -1)
+	{
+		if(IsValidEntity(ent))
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 stock bool HasAlivePlayer(int team)
